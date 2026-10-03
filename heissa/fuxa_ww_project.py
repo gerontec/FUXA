@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a FUXA project that ports ww_hydraulik.php: WebAPI device polling ww_api.php,
 one tag per value, and the hydraulic diagram as a FUXA view (values + temperature colours via ranges)."""
-import json, math, sys
+import json, math, os, sys
 
 API = 'https://heissa.de/web1/ww_api.php'
 DEV = 'd_ww_api'
@@ -50,12 +50,64 @@ for k in keys:
 tags['t_timestamp'] = {'id': 't_timestamp', 'name': 'timestamp', 'label': 'timestamp', 'type': 'string', 'address': 'timestamp',
                        'daq': {'enabled': False, 'interval': 60, 'changed': True}}
 
+# Dyness battery: second WebAPI device on dyness_api.php, tag ids t_dy_<key>
+DY_API, DY_DEV = 'https://heissa.de/web1/dyness_api.php', 'd_dyness_api'
+dy_api = json.load(open(sys.argv[2])) if len(sys.argv) > 2 else None
+dy_tags = {}
+for k, e in (dy_api['values'].items() if dy_api else []):
+    typ = 'boolean' if isinstance(e['value'], bool) else 'string' if isinstance(e['value'], str) else 'number'
+    dy_tags['t_dy_' + k] = {'id': 't_dy_' + k, 'name': 'dy_' + k, 'label': k, 'type': typ, 'address': f'values:{k}:value',
+                            'description': e['description'], 'daq': {'enabled': False, 'interval': 600, 'changed': True}}
+dy_tags['t_dy_timestamp'] = {'id': 't_dy_timestamp', 'name': 'dy_timestamp', 'label': 'timestamp', 'type': 'string',
+                             'address': 'timestamp', 'daq': {'enabled': False, 'interval': 600, 'changed': True}}
+
+# Sofar HYD 20KTL-3PH (customer Bob): third WebAPI device on sofar_api.php, tag ids t_sf_<key>
+SF_API, SF_DEV = 'https://heissa.de/web1/sofar_api.php', 'd_sofar_api'
+sf_api = json.load(open(sys.argv[3])) if len(sys.argv) > 3 else None
+sf_tags = {}
+for k, e in (sf_api['values'].items() if sf_api else []):
+    sf_tags['t_sf_' + k] = {'id': 't_sf_' + k, 'name': 'sf_' + k, 'label': k, 'type': 'number', 'address': f'values:{k}:value',
+                            'description': e['description'], 'daq': {'enabled': False, 'interval': 300, 'changed': True}}
+
 # ---- SVG ----------------------------------------------------------------------------------------
 svg, svg_top, items = [], [], {}
 IMG = 'https://heissa.de/web1/fuxa_img/'
 SHIFT_X, SHIFT_Y = -20, -60
 SCALE = 2  # whole drawing (canvas, shift group, image widgets) scaled by this factor
 n = [0]
+CUR_DEV = [DEV]  # device of the view being drawn
+
+# labels are written in German and translated here; FUXA_LANG=de keeps the German original
+LANG = os.environ.get('FUXA_LANG', 'en')
+EN = {
+    'WW-Hydraulik live (FUXA)': 'Heatpump hydraulics', 'WW-Hydraulik': 'DHW Hydraulics', 'Stand': 'as of',
+    'WP 22kW R290': 'HP 22kW R290', 'außen': 'outdoor', 'Verdampfer + Lüfter': 'Evaporator + fan',
+    'Platten-WT': 'Plate HX', 'Kondensator': 'Condenser', 'Verdichter': 'Compressor', 'Heißgas': 'Hot gas',
+    'Modus': 'Mode', 'Kältemittel R290 (Propan)': 'Refrigerant R290 (propane)',
+    'Heizung 6 h (Grafana) ▸': 'Heating 6 h (Grafana) ▸', 'JAZ': 'SPF', 'Puffer': 'Buffer', 'WP-Fühler': 'HP sensor',
+    'WW-Boiler': 'DHW boiler', 'Puffer-Wendel': 'Buffer coil', 'Solar-Wendel': 'Solar coil', 'WW-Zapfung': 'DHW tap',
+    'Kaltwasser': 'Cold water', 'WW gezapft': 'DHW tapped', 'WW-Pumpe': 'DHW pump', 'Zenner-VL': 'Zenner flow',
+    'Kessel': 'Vessel', 'VL nach Wendel': 'Flow after coil', 'Heizkreise': 'Heating circuits',
+    '3 Wohnungen': '3 apartments', 'Batterie (Dyness) ▸': 'Battery (Dyness) ▸', 'Energieklasse C': 'EU energy class C', 'Höhe 1988 mm': 'height 1988 mm', '856 L · Verlust 128 W': '856 L · loss 128 W', 'Zenner gesamt': 'Zenner total', 'VL': 'Sup', 'RL': 'Ret', 'Zenner-RL': 'Zenner return',
+    'Solarthermie': 'Solar thermal', 'WarmWasser Anteil': 'DHW share', '· Heizkreise': '· circuits',
+    'WW = Zenner gesamt × (VL − Kessel) / (VL − RL) · Puffer + Solar = WW + HK':
+        'DHW = total × (flow − vessel) / (flow − return) · buffer + solar = DHW + HC',
+    'Flow Ø 30 Tage': 'Flow Ø 30 days',
+    'Dyness OpenAPI, alle 10 min': 'Dyness OpenAPI, every 10 min',
+    '◂ Wärmepumpe': '◂ Heat pump', 'STACK100 · 13 Module': 'STACK100 · 13 modules', 'Ladezustand': 'State of charge',
+    'von': 'of', 'Leistung': 'Power', '+ laden · − entladen': '+ charging · − discharging', 'Spannung': 'Voltage',
+    'Strom': 'Current', 'Temperatur': 'Temperature', 'Ladegrenze': 'Charge limit', 'Entladegrenze': 'Discharge limit',
+    'Zellen': 'Cells', 'Zelle max': 'Cell max', 'Zelle min': 'Cell min', 'Spreizung': 'Spread', 'Temp max': 'Temp max',
+    'Zustand': 'Health', 'Zyklen': 'Cycles', 'Module': 'Modules', '× 16 Zellen': '× 16 cells',
+    'Verlauf (dyness.php) ▸': 'History (dyness.php) ▸', 'Kunde Bob, Bobingen · LFP-Stapel': 'Customer Bob, Bobingen · LFP stack',
+    'Hybrid-WR 3~ 20 kW': 'Hybrid inverter 3~ 20 kW', 'Netz': 'Grid', 'Verbrauch': 'Load', 'heute': 'today', 'Bezug heute': 'Import today',
+    'Einspeisung heute': 'Export today', 'Haus': 'House', 'Akku heute': 'Battery today', 'kWh geladen': 'kWh charged',
+    'kWh entladen': 'kWh discharged', 'Batteriespeicher Dyness': 'Dyness battery · Sofar inverter', '% vom Gesamt': '% of total', '°C (SPS)': '°C (PLC)',
+}
+
+
+def T(s):
+    return EN.get(s, s) if LANG == 'en' else s
 
 
 def nid(p='svg_'):
@@ -65,7 +117,7 @@ def nid(p='svg_'):
 
 def text(x, y, s, size=15, weight='normal', anchor='start', fill=FG):
     svg.append(f'<text id="{nid()}" x="{x}" y="{y}" font-size="{size}" font-weight="{weight}" text-anchor="{anchor}" '
-               f'font-family="sans-serif" fill="{fill}" stroke-width="0" xml:space="preserve">{s}</text>')
+               f'font-family="sans-serif" fill="{fill}" stroke-width="0" xml:space="preserve">{T(s)}</text>')
 
 
 def value(x, y, key, unit='', digits=1, size=17, weight='bold', anchor='start', fill=FG):
@@ -74,8 +126,8 @@ def value(x, y, key, unit='', digits=1, size=17, weight='bold', anchor='start', 
                f'<text id="{tid}" x="{x}" y="{y}" font-size="{size}" font-weight="{weight}" text-anchor="{anchor}" font-family="sans-serif" '
                f'fill="{fill}" stroke-width="0" xml:space="preserve">–</text></g>')
     items[gid] = {'id': gid, 'type': 'svg-ext-value', 'name': key, 'label': 'Value',
-                  'property': {'variableId': 't_' + key, 'variableSrc': DEV, 'events': [], 'actions': [],
-                               'ranges': [{'type': 1, 'text': unit, 'fractionDigits': digits}]}}
+                  'property': {'variableId': 't_' + key, 'variableSrc': CUR_DEV[0], 'events': [], 'actions': [],
+                               'ranges': [{'type': 1, 'text': T(unit), 'fractionDigits': digits}]}}
 
 
 def shape(tag, attrs, key=None, ranges=None, extra=None):
@@ -84,7 +136,7 @@ def shape(tag, attrs, key=None, ranges=None, extra=None):
     svg.append(f'<{tag} id="{sid}" {a}/>')
     if key:
         items[sid] = {'id': sid, 'type': f'svg-ext-shapes-{tag}', 'name': key, 'label': 'Shapes',
-                      'property': {'variableId': 't_' + key, 'variableSrc': DEV, 'events': [], 'actions': [], 'ranges': ranges}}
+                      'property': {'variableId': 't_' + key, 'variableSrc': CUR_DEV[0], 'events': [], 'actions': [], 'ranges': ranges}}
     return sid
 
 
@@ -226,6 +278,18 @@ items[sid] = {'id': sid, 'type': 'svg-ext-shapes-rect', 'name': 'grafana_6h', 'l
               'property': {'variableId': '', 'events': [{'type': 'click', 'action': 'oncard', 'actparam': GRAFANA_6H,
                                                          'actoptions': {'width': 900, 'height': 520, 'newTab': False}}],
                            'actions': [], 'ranges': []}}
+
+
+def click_tile(x, y, w, h, name, event):
+    """transparent rect on top of a drawn tile that carries a FUXA click event"""
+    sid = shape('rect', {'x': x, 'y': y, 'width': w, 'height': h, 'rx': 6, 'fill': '#ffffff', 'fill-opacity': 0.001, 'stroke': 'none'})
+    items[sid] = {'id': sid, 'type': 'svg-ext-shapes-rect', 'name': name, 'label': 'Shapes',
+                  'property': {'variableId': '', 'events': [dict(type='click', **event)], 'actions': [], 'ranges': []}}
+
+
+box(600, 64, 180, 28, '#0f2a1c', 6)
+text(690, 83, 'Batterie (Dyness) ▸', 13, 'bold', 'middle', '#4ade80')
+click_tile(600, 64, 180, 28, 'nav_dyness', {'action': 'onOpenTab', 'actparam': 'https://fuxadyness.heissa.de/', 'actoptions': {'newTab': False}})
 text(372, 154, 'CEE 400 V', 14, 'bold')
 text(372, 172, '3~ L1 L2 L3 N PE', 11, fill=MUTED)
 
@@ -257,6 +321,11 @@ tank(395, 240, 510, 75, 18, TANK, 'buffer_tank_temp')
 text(395, 350, 'Puffer', 16, 'bold', 'middle')
 value(395, 380, 'buffer_tank_temp', '°C', 1, anchor='middle')
 text(395, 404, 'WP-Fühler', 13, anchor='middle', fill=MUTED)
+text(395, 426, '856 L · Verlust 128 W', 12, anchor='middle', fill=MUTED)
+text(395, 442, 'Energieklasse C', 12, anchor='middle', fill=MUTED)
+text(395, 458, 'Höhe 1988 mm', 12, anchor='middle', fill=MUTED)
+text(395, 472, 'SUNEX', 13, 'bold', 'middle', fill=MUTED)
+text(395, 490, 'FISH S4 1000U', 13, anchor='middle', fill=MUTED)
 
 # HP loop
 pipe('M240,325 L320,325', 'heat_pump_outlet_temp')
@@ -267,6 +336,7 @@ value(280, 410, 'heat_pump_inlet_temp', '°C', 1, 15, 'normal', 'middle')
 # DHW boiler with coils
 tank(720, 190, 650, 100, 20, BOILER, 'dhw_temp', 'dhw')
 text(852, 215, 'WW-Boiler', 16, 'bold')
+text(720, 525, '269 L', 18, 'bold', 'middle')
 shape('path', {'d': coil(720, 245, 445, 70, 6), 'fill': 'none', 'stroke': MUTED, 'stroke-width': 4}, 'buffer_tank_temp', temp_ranges('stroke'))
 shape('path', {'d': coil(720, 575, 625, 55, 2), 'fill': 'none', 'stroke': MUTED, 'stroke-width': 4}, 'solar_temp', temp_ranges('stroke'))
 text(720, 475, 'Puffer-Wendel', 13, anchor='middle', fill=MUTED)
@@ -320,7 +390,7 @@ text(1398, 474, 'RL', anchor='end')
 value(1403, 474, 'zenner_return_temp', '°C', None, 15, 'normal')
 value(1380, 498, 'zenner_flow', 'l/min', 1, 15, 'normal', 'middle')
 value(1380, 528, 'zenner_power', 'kW', 1, anchor='middle')
-text(890, 725, 'RL', anchor='end')
+text(890, 725, 'RL' if LANG == 'de' else 'Return', anchor='end')
 value(896, 725, 'zenner_return_temp', '°C (Zenner)', None, 15, 'normal')
 shape('circle', {'cx': 1380, 'cy': 600, 'r': 7, 'fill': ZEN, 'stroke': STROKE})
 text(1394, 605, 'Zenner-RL', 13, fill=MUTED)
@@ -347,20 +417,161 @@ text(1015, 199, 'Flow Ø 30 Tage', 13, fill=MUTED)
 value(1112, 199, 'zenner_flow_avg30d', 'l/min', 1, 13, 'normal', fill=MUTED)
 
 W, H = 1460 * SCALE, 690 * SCALE
-svgcontent = (f'<svg width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">'
-              '<defs><marker id="arr" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
-              '<path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>'
-              f'<g><title>Layer 1</title><g id="svg_shift" transform="scale({SCALE}) translate({SHIFT_X},{SHIFT_Y})">' + ''.join(svg) + '</g>' + ''.join(svg_top) + '</g></svg>')
 
-view = {'id': 'v_ww_hydraulik', 'name': 'WW-Hydraulik', 'profile': {'width': W, 'height': H, 'bkcolor': '#000000ff', 'margin': 0},
-        'items': items, 'variables': {}, 'svgcontent': svgcontent, 'type': 'svg'}
+
+def make_view(vid, name):
+    """wrap the collected svg/svg_top/items into a FUXA view and start a new drawing"""
+    svgcontent = (f'<svg width="{W}" height="{H}" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">'
+                  '<defs><marker id="arr" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
+                  '<path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>'
+                  f'<g><title>Layer 1</title><g id="svg_shift" transform="scale({SCALE}) translate({SHIFT_X},{SHIFT_Y})">' + ''.join(svg) + '</g>' + ''.join(svg_top) + '</g></svg>')
+    v = {'id': vid, 'name': name, 'profile': {'width': W, 'height': H, 'bkcolor': '#000000ff', 'margin': 0},
+         'items': dict(items), 'variables': {}, 'svgcontent': svgcontent, 'type': 'svg'}
+    svg.clear(); svg_top.clear(); items.clear()
+    return v
+
+
+view = make_view('v_ww_hydraulik', T('WW-Hydraulik'))
+
+# ---- Dyness battery view -----------------------------------------------------------------------
+CUR_DEV[0] = DY_DEV
+DY_IMG = '/_images/dyness/stack100-13s.png'  # uploaded via POST /api/upload (destination images/dyness), 268x751 px
+GREEN, ORANGE = '#22c55e', '#f59e0b'
+text(30, 86, 'Batteriespeicher Dyness', 17, 'bold')
+text(380, 86, 'Stand', 13, fill=MUTED)
+value(425, 86, 'dy_timestamp', '', None, 13, 'normal', fill=MUTED)
+text(640, 86, 'Dyness OpenAPI, alle 10 min', 13, fill=MUTED)
+box(1290, 64, 180, 28, '#16263a', 6)
+text(1380, 83, '◂ Wärmepumpe', 13, 'bold', 'middle', '#93c5fd')
+click_tile(1290, 64, 180, 28, 'nav_ww', {'action': 'onOpenTab', 'actparam': 'https://fuxa.heissa.de/', 'actoptions': {'newTab': False}})
+
+# tower picture
+svg.append(f'<image id="{nid()}" x="60" y="105" width="215" height="602" href="{DY_IMG}" xlink:href="{DY_IMG}" preserveAspectRatio="xMidYMid meet"/>')
+text(167, 728, 'STACK100 · 13 Module', 13, anchor='middle', fill=MUTED)
+
+# SOC gauge: 10 segments, segment i lights up from SOC >= 10*i + 5
+text(330, 120, 'SOC', 14, 'bold', 'middle')
+for i in range(10):
+    y = 620 - i * 50
+    col = GREEN if i >= 2 else ORANGE
+    shape('rect', {'x': 300, 'y': y, 'width': 60, 'height': 42, 'rx': 4, 'fill': '#1f2937', 'stroke': STROKE, 'stroke-width': 1},
+          'dy_soc', [{'type': 2, 'min': -1, 'max': 10 * i + 5, 'color': '#1f2937', 'stroke': ''},
+                     {'type': 2, 'min': 10 * i + 5, 'max': 101, 'color': col, 'stroke': ''}])
+value(330, 698, 'dy_soc', '%', None, 22, anchor='middle')
+
+# main values
+box(410, 120, 330, 250, '#0f2a1c', 10)
+text(430, 150, 'Ladezustand', 15, fill=MUTED)
+value(430, 200, 'dy_soc', '%', None, 44)
+value(430, 240, 'dy_remaining_kwh', 'kWh', 1, 20, 'normal')
+text(560, 240, 'von', 15, fill=MUTED)
+value(595, 240, 'dy_rated_kwh', 'kWh', 2, 15, 'normal', fill=MUTED)
+text(430, 290, 'Leistung', 15, fill=MUTED)
+shape('circle', {'cx': 440, 'cy': 330, 'r': 9, 'fill': MUTED}, 'dy_battery_power_kw',
+      [{'type': 2, 'min': -1000, 'max': -0.05, 'color': ORANGE, 'stroke': ''}, {'type': 2, 'min': -0.05, 'max': 0.05, 'color': MUTED, 'stroke': ''},
+       {'type': 2, 'min': 0.05, 'max': 1000, 'color': GREEN, 'stroke': ''}])
+value(460, 338, 'dy_battery_power_kw', 'kW', 2, 26)
+value(620, 338, 'dy_battery_status', '', None, 16, 'normal', fill=MUTED)
+text(430, 360, '+ laden · − entladen', 12, fill=MUTED)
+
+# electrical / cells
+box(770, 120, 330, 250, '#16263a', 10)
+text(790, 150, 'Pack', 15, 'bold')
+for i, (lab, key, unit, dig) in enumerate([('Spannung', 'dy_battery_voltage', 'V', 1), ('Strom', 'dy_battery_current', 'A', 2),
+                                           ('Temperatur', 'dy_battery_temp', '°C', 1), ('Ladegrenze', 'dy_charge_limit_a', 'A', 0),
+                                           ('Entladegrenze', 'dy_discharge_limit_a', 'A', 0)]):
+    text(790, 185 + i * 36, lab, 15, fill=MUTED)
+    value(940, 185 + i * 36, key, unit, dig, 17)
+
+box(1130, 120, 330, 250, '#16263a', 10)
+text(1150, 150, 'Zellen', 15, 'bold')
+for i, (lab, key, unit, dig) in enumerate([('Zelle max', 'dy_cell_max_v', 'V', 3), ('Zelle min', 'dy_cell_min_v', 'V', 3),
+                                           ('Spreizung', 'dy_cell_diff_mv', 'mV', 0), ('Temp max', 'dy_cell_max_temp', '°C', 1),
+                                           ('Temp min', 'dy_cell_min_temp', '°C', 1)]):
+    text(1150, 185 + i * 36, lab, 15, fill=MUTED)
+    value(1290, 185 + i * 36, key, unit, dig, 17)
+
+# health + history (right column)
+box(1130, 400, 330, 50, '#111827', 8)
+text(1295, 431, 'Verlauf (dyness.php) ▸', 15, 'bold', 'middle')
+click_tile(1130, 400, 330, 50, 'dyness_history',
+           {'action': 'oncard', 'actparam': 'https://heissa.de/web1/dyness.php', 'actoptions': {'width': 1100, 'height': 700, 'newTab': False}})
+box(1130, 470, 330, 150, '#1c1c2a', 10)
+text(1150, 500, 'Zustand', 15, 'bold')
+for i, (lab, key, unit) in enumerate([('SOH', 'dy_soh', '%'), ('Zyklen', 'dy_cycle_count', ''), ('Module', 'dy_box_count', '× 16 Zellen')]):
+    text(1150, 535 + i * 30, lab, 15, fill=MUTED)
+    value(1260, 535 + i * 30, key, unit, None, 17)
+text(1130, 650, 'Kunde Bob, Bobingen · LFP-Stapel', 13, fill=MUTED)
+text(1130, 672, 'API: heissa.de/web1/dyness_api.php', 13, fill=MUTED)
+text(1130, 694, '+ heissa.de/web1/sofar_api.php', 13, fill=MUTED)
+
+# Sofar HYD 20KTL-3PH hybrid inverter (drawn): white housing, dark display panel, heat sink fins
+INV_X, INV_Y = 450, 410
+shape('rect', {'x': INV_X, 'y': INV_Y, 'width': 170, 'height': 270, 'rx': 12, 'fill': '#e5e7eb', 'stroke': STROKE, 'stroke-width': 1.5})
+shape('rect', {'x': INV_X + 14, 'y': INV_Y + 18, 'width': 142, 'height': 110, 'rx': 6, 'fill': '#1f2937'})
+text(INV_X + 85, INV_Y + 46, 'SOFAR', 18, 'bold', 'middle', '#ffffff')
+shape('rect', {'x': INV_X + 30, 'y': INV_Y + 58, 'width': 110, 'height': 52, 'rx': 3, 'fill': '#0b3b4a', 'stroke': '#38bdf8', 'stroke-width': 1})
+CUR_DEV[0] = SF_DEV
+value(INV_X + 85, INV_Y + 92, 'sf_output_power', 'kW AC', 2, 16, 'bold', 'middle', '#7dd3fc')
+CUR_DEV[0] = DY_DEV
+for j, c in enumerate(('#22c55e', '#f59e0b', '#ef4444')):
+    shape('circle', {'cx': INV_X + 60 + j * 25, 'cy': INV_Y + 150, 'r': 4, 'fill': c})
+shape('path', {'d': ' '.join(f'M{x},{INV_Y + 185} L{x},{INV_Y + 255}' for x in range(INV_X + 20, INV_X + 155, 10)),
+               'stroke': '#9ca3af', 'stroke-width': 3, 'fill': 'none'})
+text(INV_X + 85, INV_Y + 300, 'Sofar HYD 20KTL-3PH', 14, 'bold', 'middle')
+text(INV_X + 85, INV_Y + 318, 'Hybrid-WR 3~ 20 kW', 12, anchor='middle', fill=MUTED)
+
+# DC link battery <-> inverter, coloured by direction (orange = discharging, green = charging)
+shape('path', {'d': f'M275,690 L284,690 L284,742 L405,742 L405,{INV_Y + 220} L{INV_X},{INV_Y + 220}', 'fill': 'none', 'stroke': MUTED, 'stroke-width': 5,
+               'stroke-linejoin': 'round'}, 'dy_battery_power_kw',
+      [{'type': 2, 'min': -1000, 'max': -0.05, 'color': '', 'stroke': ORANGE}, {'type': 2, 'min': -0.05, 'max': 0.05, 'color': '', 'stroke': MUTED},
+       {'type': 2, 'min': 0.05, 'max': 1000, 'color': '', 'stroke': GREEN}])
+value(412, 660, 'dy_battery_voltage', 'V DC', 0, 12, 'normal', 'start', MUTED)
+
+# PV, grid, load on the right of the inverter (live kW where the inverter reports it, else today's energy)
+CUR_DEV[0] = SF_DEV
+PV_C, GRID_C, LOAD_C = '#facc15', '#a78bfa', '#38bdf8'
+for (y, title, col, rows, live) in [
+        (410, 'PV', PV_C, [('PV1', 'sf_pv1_power', 'kW', 2), ('PV2', 'sf_pv2_power', 'kW', 2), ('heute', 'sf_pv_today', 'kWh', 1)], 'sf_pv_power'),
+        (510, 'Netz', GRID_C, [('Bezug heute', 'sf_grid_purchase_today', 'kWh', 1), ('Einspeisung heute', 'sf_grid_feed_in_today', 'kWh', 1)], None),
+        (610, 'Verbrauch', LOAD_C, [('Haus', 'sf_load_power', 'kW', 2), ('heute', 'sf_load_today', 'kWh', 1)], 'sf_load_power')]:
+    line = {'d': f'M{INV_X + 170},{y + 40} L720,{y + 40}', 'fill': 'none', 'stroke': MUTED, 'stroke-width': 4}
+    if live:
+        shape('path', line, live, [{'type': 2, 'min': -1, 'max': 0.05, 'color': '', 'stroke': MUTED},
+                                   {'type': 2, 'min': 0.05, 'max': 1000, 'color': '', 'stroke': col}])
+    else:
+        shape('path', dict(line, stroke=col))
+    box(720, y, 370, 85, '#111827', 8)
+    text(738, y + 26, title, 15, 'bold', fill=col)
+    for i, (lab, key, unit, dig) in enumerate(rows):
+        text(738 + (i % 2) * 185, y + 52 + (i // 2) * 24, lab, 13, fill=MUTED)
+        value(738 + (i % 2) * 185 + (75 if len(lab) < 6 else 120), y + 52 + (i // 2) * 24, key, unit, dig, 14)
+CUR_DEV[0] = DY_DEV
+text(738, 718, 'Akku heute', 13, fill=MUTED)
+CUR_DEV[0] = SF_DEV
+value(830, 718, 'sf_battery_charge_today', 'kWh geladen', 1, 13, 'normal')
+value(990, 718, 'sf_battery_discharge_today', 'kWh entladen', 1, 13, 'normal')
+CUR_DEV[0] = DY_DEV
+
+dy_view = make_view('v_dyness', T('Batteriespeicher Dyness'))
+
+PROJECT = os.environ.get('FUXA_PROJECT', 'ww')
+if PROJECT == 'dyness':
+    views, title = [dy_view], T('Batteriespeicher Dyness')
+    devices = {DY_DEV: {'id': DY_DEV, 'name': 'dyness_api', 'type': 'WebAPI', 'enabled': True, 'polling': 60000,
+                        'property': {'address': DY_API, 'method': 'GET', 'format': 'JSON'}, 'tags': dy_tags},
+               SF_DEV: {'id': SF_DEV, 'name': 'sofar_api', 'type': 'WebAPI', 'enabled': True, 'polling': 60000,
+                        'property': {'address': SF_API, 'method': 'GET', 'format': 'JSON'}, 'tags': sf_tags}}
+else:
+    views, title = [view], T('WW-Hydraulik')
+    devices = {DEV: {'id': DEV, 'name': 'ww_api', 'type': 'WebAPI', 'enabled': True, 'polling': 60000,
+                     'property': {'address': API, 'method': 'GET', 'format': 'JSON'}, 'tags': tags}}
 project = {
-    'version': '1.01', 'name': 'WW-Hydraulik',
+    'version': '1.01', 'name': title,
     'server': {'id': '0', 'name': 'FUXA Server', 'type': 'FuxaServer', 'property': {}},
-    'devices': {DEV: {'id': DEV, 'name': 'ww_api', 'type': 'WebAPI', 'enabled': True, 'polling': 60000,
-                      'property': {'address': API, 'method': 'GET', 'format': 'JSON'}, 'tags': tags}},
-    'hmi': {'views': [view], 'layout': {'start': view['id'], 'navigation': {'mode': 'void', 'type': 'inline', 'items': []},
-                                        'header': {'title': 'WW-Hydraulik', 'bkcolor': '#000000', 'fontcolor': FG}, 'showdev': False,
+    'devices': devices,
+    'hmi': {'views': views, 'layout': {'start': views[0]['id'], 'navigation': {'mode': 'void', 'type': 'inline', 'items': []},
+                                        'header': {'title': title, 'bkcolor': '#000000', 'fontcolor': FG}, 'showdev': False,
                                         'zoom': 'autoresize', 'inputdialog': 'false', 'hidenavigation': True}},
     'charts': [], 'alarms': [], 'notifications': [], 'scripts': [], 'reports': [], 'texts': [], 'plugin': [],
 }
